@@ -25,6 +25,7 @@ let db, auth;
 let userId;
 let inventoryCollectionRef, salesCollectionRef, expensesCollectionRef;
 let currentUser = null;
+let authInitialized = false;
 
 // IMPORTANT: Replace these with your authorized Google emails
 const authorizedEmails = [
@@ -78,6 +79,8 @@ auth = getAuth(app);
 
 // --- AUTHENTICATION ---
 onAuthStateChanged(auth, async (user) => {
+    authInitialized = true;
+    
     if (user) {
         // Check if user email is authorized
         if (!authorizedEmails.includes(user.email)) {
@@ -95,8 +98,10 @@ onAuthStateChanged(auth, async (user) => {
         document.getElementById('userDisplayName').textContent = user.displayName || user.email;
         document.getElementById('userEmail').textContent = user.email;
 
+        // Reset photo and show if available
+        const photoEl = document.getElementById('userPhoto');
+        photoEl.classList.add('hidden');
         if (user.photoURL) {
-            const photoEl = document.getElementById('userPhoto');
             photoEl.src = user.photoURL;
             photoEl.classList.remove('hidden');
         }
@@ -113,6 +118,8 @@ onAuthStateChanged(auth, async (user) => {
         // Determine user role
         const userRole = emailRoles[user.email] || 'employee';
         sessionStorage.setItem('userRole', userRole);
+        // Clear traditional user flag since we have a Google user
+        sessionStorage.removeItem('traditionalUser');
 
         // Show app view
         document.getElementById('login-view').classList.add('hidden');
@@ -122,9 +129,39 @@ onAuthStateChanged(auth, async (user) => {
         // Start data listeners
         attachFirestoreListeners();
     } else {
-        console.log("User is not signed in.");
-        currentUser = null;
-        showLoginView();
+        // No Firebase user - check for traditional login
+        const traditionalUserStr = sessionStorage.getItem('traditionalUser');
+        if (traditionalUserStr) {
+            // Traditional user exists, restore that session
+            const savedUser = JSON.parse(traditionalUserStr);
+            const role = sessionStorage.getItem('userRole');
+
+            currentUser = savedUser;
+            userId = savedUser.uid;
+
+            document.getElementById('userDisplayName').textContent = savedUser.displayName;
+            document.getElementById('userEmail').textContent = savedUser.email;
+            document.getElementById('userPhoto').classList.add('hidden');
+
+            inventoryCollectionPath = `/artifacts/${appId}/users/${userId}/inventory`;
+            salesCollectionPath = `/artifacts/${appId}/users/${userId}/sales`;
+            expensesCollectionPath = `/artifacts/${appId}/users/${userId}/expenses`;
+
+            inventoryCollectionRef = collection(db, inventoryCollectionPath);
+            salesCollectionRef = collection(db, salesCollectionPath);
+            expensesCollectionRef = collection(db, expensesCollectionPath);
+
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            applyRoleRestrictions(role);
+
+            attachFirestoreListeners();
+        } else {
+            // No user at all - show login
+            console.log("User is not signed in.");
+            currentUser = null;
+            showLoginView();
+        }
     }
 });
 
@@ -152,7 +189,7 @@ async function signInTraditional(username, password) {
     const cred = traditionalCredentials[username];
     if (cred && cred.pass === password) {
         currentUser = {
-            uid: cred.userId,  // Use the shared userId
+            uid: cred.userId,
             email: `${username}@local`,
             displayName: cred.name
         };
@@ -905,31 +942,5 @@ window.onload = () => {
     document.getElementById('btn-logout').addEventListener('click', showLoginView);
     document.getElementById('google-signin-btn').addEventListener('click', signInWithGoogle);
 
-    // Check for traditional user session
-    const traditionalUserStr = sessionStorage.getItem('traditionalUser');
-    if (traditionalUserStr) {
-        const savedUser = JSON.parse(traditionalUserStr);
-        const role = sessionStorage.getItem('userRole');
-
-        currentUser = savedUser;
-        userId = savedUser.uid;
-
-        document.getElementById('userDisplayName').textContent = savedUser.displayName;
-        document.getElementById('userEmail').textContent = savedUser.email;
-        document.getElementById('userPhoto').classList.add('hidden');
-
-        inventoryCollectionPath = `/artifacts/${appId}/users/${userId}/inventory`;
-        salesCollectionPath = `/artifacts/${appId}/users/${userId}/sales`;
-        expensesCollectionPath = `/artifacts/${appId}/users/${userId}/expenses`;
-
-        inventoryCollectionRef = collection(db, inventoryCollectionPath);
-        salesCollectionRef = collection(db, salesCollectionPath);
-        expensesCollectionRef = collection(db, expensesCollectionPath);
-
-        document.getElementById('login-view').classList.add('hidden');
-        document.getElementById('app-view').classList.remove('hidden');
-        applyRoleRestrictions(role);
-
-        attachFirestoreListeners();
-    }
-};
+    // onAuthStateChanged will handle both Google and traditional sessions automatically
+}
